@@ -19,6 +19,7 @@ using MyCredentials = struct {
 };
 
 using ItemData = std::map<std::string, int>;
+using MonsterData = std::map<std::string, int>;
 using XMLDoc = struct {
     std::string name;
     std::string xml_path;
@@ -38,7 +39,7 @@ private:
 
 private:
     std::vector<XMLDoc> loadXMLs();
-    std::map<std::string, ItemData> getItemMap();
+    std::map<std::string, ItemData> getMap();
 };
 
 

@@ -27,7 +27,12 @@ static std::string getFirstWord(std::string origin) {
 
 Server::Server(std::string ip, std::string port, MyCredentials crd)
         : server(ip, port, mux) {
-    auto itemData = getItemMap();
+    auto itemData = getMap();
+
+    std::map<std::string, std::string> mob;
+    for (auto it : itemData["Mob"]) {
+        mob.emplace(std::pair<std::string, std::string>(std::to_string(it.second), it.first));
+    }
 
     mux.handle("/get/code/{item_type}").get([=](served::response & res, const served::request & req) {
         auto type = req.params["item_type"];
@@ -44,52 +49,71 @@ Server::Server(std::string ip, std::string port, MyCredentials crd)
             itemCode = itemData.at(type).at(itemName);
         } catch (std::exception &e) {
             std::cout << e.what() << std::endl;
-            res << " { result: \"error\" }" << "\n";
+            res << " { result: \"error\" }";
+
+            return;
         }
 
         res << "{ result: " + std::to_string(itemCode) + "}" << "\n";
     });
 
-    mux.handle("/get/dropper/{item_code:\\d+}").get([=](served::response &res, const served::request &req) {
-        using namespace daotk::mysql;
+    mux.handle("/get/dropper").get([=](served::response &res, const served::request &req) {
+        if (req.query["get"] == "name") {
+            std::string mobCode = req.query["code"];
 
-        connection mysql(crd.host, crd.username, crd.password, crd.database);
-
-        if (mysql) {
-            std::cout << req.params["item_code"] << std::endl;
-            auto sql = boost::format("select dropperid, itemid from drop_data where itemid=%1%") % req.params["item_code"];
-            std::cout << sql << std::endl;
-            auto result = mysql.query(sql.str());
-
-            if (result.is_empty()) {
-                res << "{ result: \"not_found\" }";
+            if (mobCode.length() <= 0) {
+                res << "{ result: \"not_enough_query\" }";
                 return;
             }
 
-            res << "{\n"
-                << std::string(TAB) + "result: [";
+            std::cout << mobCode << std::endl;
+            //auto mobName = mob[mobCode];
+            res << "{ result: \"" << mob.at(mobCode) << "\" }";
+        } else if (req.query["get"] == "monsters") {
+            using namespace daotk::mysql;
 
-            for (auto d : result.as_container<int, int>()) {
-                int droppper_id, item_id;
-                std::tie(droppper_id, item_id) = d;
+            connection mysql(crd.host, crd.username, crd.password, crd.database);
 
-                auto _result = boost::format("{ dropper: %1% }") % droppper_id;
+            if (mysql) {
+                //std::cout << req.params["code"] << std::endl;
+                auto sql = boost::format("select dropperid from drop_data where itemid=%1%") %
+                           req.query["code"];
+                //std::cout << sql << std::endl;
+                auto result = mysql.query(sql.str());
 
-                res << std::string(TAB) << std::string(TAB) << boost::str(_result);
-                res << ",";
+                if (result.is_empty()) {
+                    res << "{ result: \"not_found\" }";
+                    return;
+                }
+
+                res << "{\n"
+                    << std::string(TAB) + "result: [";
+
+                for (auto d : result.as_container<int>()) {
+                    int droppper_id;
+                    std::tie(droppper_id) = d;
+
+                    auto _result = boost::format("{ dropper: %1% }") % droppper_id;
+
+                    res << std::string(TAB) << std::string(TAB) << boost::str(_result);
+                    res << ",";
+                }
+
+                res << std::string(TAB) << "]";
+                res << "}";
+            } else {
+                res << "Database connection failed";
             }
 
-            res << std::string(TAB) << "]";
-            res << "}";
+            mysql.close();
         } else {
-            res << "Database connection failed";
+            // require parameter at least more than one for this handle
+            res << " { result: \"not_defined_query\" }";
         }
-
-        mysql.close();
     });
 }
 
-std::map<std::string, ItemData> Server::getItemMap() {
+std::map<std::string, ItemData> Server::getMap() {
     std::map<std::string, ItemData> itm;
 
     auto all_data = loadXMLs();
