@@ -6,12 +6,11 @@
 
 #include <iostream>
 #include <sstream>
+#include <algorithm>
 
 #include <served/uri.hpp>
 #include <mysql++11/mysql++11.h>
 #include <boost/format.hpp>
-
-#define TAB "    "
 
 static std::string getFirstWord(std::string origin) {
     std::istringstream stream(origin);
@@ -27,34 +26,48 @@ static std::string getFirstWord(std::string origin) {
 
 Server::Server(std::string ip, std::string port, MyCredentials crd)
         : server(ip, port, mux) {
-    auto itemData = getMap();
+    auto const allOfCodes = getMap();
 
     std::map<std::string, std::string> mob;
-    for (auto it : itemData["Mob"]) {
-        mob.emplace(std::pair<std::string, std::string>(std::to_string(it.second), it.first));
+    for (auto it : allOfCodes.at("Mob")) {
+        mob[std::to_string(it.second)] = it.first;
     }
 
-    mux.handle("/get/code/{item_type}").get([=](served::response & res, const served::request & req) {
-        auto type = req.params["item_type"];
-        auto itemName = req.query["name"];
+    mux.handle("/get/item/{search_type}/{item_type}").get([=](served::response &res, const served::request &req) {
+        auto searchToType = req.params["search_type"];
+        auto itemType = req.params["item_type"];
 
-        if (itemName.length() <= 0) {
-            res << "{ result: \"require query\" }";
+        auto whatILookingFor = req.query["name"];
+
+        if (whatILookingFor.length() <= 0 && searchToType.length() <= 0 && (searchToType != "name" || searchToType != "code")) {
+            res << "{ \"result\": \"require_query\" }";
             return;
         }
 
-        int itemCode = 0;
+        if (searchToType == "code") {
+            int itemCode = 0;
 
-        try {
-            itemCode = itemData.at(type).at(itemName);
-        } catch (std::exception &e) {
-            std::cout << e.what() << std::endl;
-            res << " { result: \"error\" }";
+            try {
+                itemCode = allOfCodes.at(itemType).at(whatILookingFor);
+            } catch (std::exception &e) {
+                std::cout << "" << e.what() << std::endl;
+                res << " { \"result\": \"not_found\" }";
 
-            return;
+                return;
+            }
+
+            res << "{ \"result\": \"" + std::to_string(itemCode) + "\" }" << "\n";
+        } else if (searchToType == "name") {
+            auto &items = allOfCodes.at(itemType);
+            auto foundIt = std::stoi(whatILookingFor);
+
+            for (auto const& iter : items) {
+                if (iter.second == foundIt) {
+                    res << "{ \"result\": \"" << iter.first << "\" }";
+                }
+            }
         }
 
-        res << "{ result: " + std::to_string(itemCode) + "}" << "\n";
     });
 
     mux.handle("/get/dropper").get([=](served::response &res, const served::request &req) {
@@ -62,13 +75,26 @@ Server::Server(std::string ip, std::string port, MyCredentials crd)
             std::string mobCode = req.query["code"];
 
             if (mobCode.length() <= 0) {
-                res << "{ result: \"not_enough_query\" }";
+                res << "{ \"result\": \"not_enough_query\" }";
                 return;
             }
 
-            std::cout << mobCode << std::endl;
+            std::string selected = "";
+            for (auto const &it : allOfCodes.at("Mob")) {
+                if (it.second == std::stoi(mobCode)) {
+                    selected = it.first;
+                    break;
+                }
+            }
+
+            if (selected.length() <= 0) {
+                res << "{ \"result\": \"not_found\" }";
+                return;
+            }
+
+            std::cout << selected << std::endl;
             //auto mobName = mob[mobCode];
-            res << "{ result: \"" << mob.at(mobCode) << "\" }";
+            res << "{ \"result\": \"" << selected << "\" }";
         } else if (req.query["get"] == "monsters") {
             using namespace daotk::mysql;
 
@@ -82,24 +108,32 @@ Server::Server(std::string ip, std::string port, MyCredentials crd)
                 auto result = mysql.query(sql.str());
 
                 if (result.is_empty()) {
-                    res << "{ result: \"not_found\" }";
+                    res << "{ \"result\": \"not_found\" }";
                     return;
                 }
 
-                res << "{\n"
-                    << std::string(TAB) + "result: [";
+                res << "{   "
+                    << "\"result\": [";
+
+                const int sizeOfResult = static_cast<int>(result.count());
+                int count = 0;
 
                 for (auto d : result.as_container<int>()) {
                     int droppper_id;
                     std::tie(droppper_id) = d;
 
-                    auto _result = boost::format("{ dropper: %1% }") % droppper_id;
+                    auto _result = boost::format("{ \"dropper\": \"%1%\" }") % droppper_id;
 
-                    res << std::string(TAB) << std::string(TAB) << boost::str(_result);
-                    res << ",";
+                    res << boost::str(_result);
+
+                    if (sizeOfResult - 1 > count) {
+                        res << ",";
+                    }
+
+                    count++;
                 }
 
-                res << std::string(TAB) << "]";
+                res << "]";
                 res << "}";
             } else {
                 res << "Database connection failed";
@@ -108,7 +142,7 @@ Server::Server(std::string ip, std::string port, MyCredentials crd)
             mysql.close();
         } else {
             // require parameter at least more than one for this handle
-            res << " { result: \"not_defined_query\" }";
+            res << " { \"result\": \"not_defined_query\" }";
         }
     });
 }
@@ -127,7 +161,7 @@ std::map<std::string, ItemData> Server::getMap() {
 
         for (pugi::xml_node itemNode : mainNode.children(MAPLESTORY_XML_NODE)) {
             std::string itemName;
-            int itemCode;
+            int itemCode = int();
 
             // std::cout << data.name << ":::";
 
@@ -155,6 +189,8 @@ std::map<std::string, ItemData> Server::getMap() {
             itm[data.name][itemName] = itemCode;
         }
     }
+
+    std::cout << "XML Loading is completed..." << std::endl;
 
     return itm;
 }

@@ -19,7 +19,7 @@ int main(int argc, char const* argv[]) {
     c.password = reader.Get("mysql", "pass", "");
     c.database = reader.Get("mysql", "db_name", "maplestory");
 
-    Server s("127.0.0.1", "8888", c);
+    Server s("192.168.11.144", "8888", c);
     s.run(10);
 
     return 0;
